@@ -1,7 +1,3 @@
-# Visium ML classification using leakage-safe stable recurrent signature genes.
-# This version discovers stable genes inside each training fold only.
-# The held-out test sample is never used during feature selection.
-
 import gc
 import math
 from pathlib import Path

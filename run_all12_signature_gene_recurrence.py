@@ -257,11 +257,11 @@ def plot_signature_recurrence_heatmap(recurrence_df: pd.DataFrame) -> None:
         )
     )
 
-    heatmap_matrix = heatmap_matrix.sort_index()
+    ordered_columns = sorted(heatmap_matrix.columns)
+    heatmap_matrix = heatmap_matrix[ordered_columns]
 
     plt.figure(figsize=(10, max(6, heatmap_matrix.shape[0] * 0.25)))
-    plt.imshow(heatmap_matrix.values, aspect="auto", vmin=0, vmax=1)
-
+    plt.imshow(heatmap_matrix.values, aspect="auto", interpolation="nearest")
     plt.colorbar(label="Recurrence Fraction")
     plt.xticks(
         range(len(heatmap_matrix.columns)),
@@ -269,12 +269,8 @@ def plot_signature_recurrence_heatmap(recurrence_df: pd.DataFrame) -> None:
         rotation=45,
         ha="right",
     )
-    plt.yticks(
-        range(len(heatmap_matrix.index)),
-        heatmap_matrix.index,
-    )
-
-    plt.title("Top Signature Gene Recurrence Across 12 Visium Samples")
+    plt.yticks(range(len(heatmap_matrix.index)), heatmap_matrix.index)
+    plt.title("Top Recurrent Signature Genes Across 12 Visium Samples")
     plt.xlabel("Brain Layer")
     plt.ylabel("Gene")
     plt.tight_layout()
@@ -284,99 +280,29 @@ def plot_signature_recurrence_heatmap(recurrence_df: pd.DataFrame) -> None:
     print("Saved:", output_path)
 
 
-def save_summary_text(
-    layer_sample_coverage: pd.DataFrame,
-    recurrence_df: pd.DataFrame,
-    stable_df: pd.DataFrame,
-) -> None:
-    output_path = COMPARISON_FOLDER / "stable_signature_gene_summary_all12.txt"
+def save_core_signature_genes(recurrence_df: pd.DataFrame) -> pd.DataFrame:
+    core_df = recurrence_df[
+        recurrence_df["recurrence_fraction"] >= CORE_FRACTION_THRESHOLD
+    ].copy()
 
-    lines = []
-
-    lines.append("All-12 Visium Signature Gene Recurrence Summary")
-    lines.append("")
-    lines.append("Purpose:")
-    lines.append(
-        "This analysis checks which clean top-10 signature genes appear repeatedly "
-        "for the same brain layer across the 12 Visium samples."
-    )
-    lines.append("")
-    lines.append("Important interpretation:")
-    lines.append(
-        "This does not prove that a gene belongs only to one layer. It means the gene "
-        "was repeatedly selected as a strong associated marker for that layer."
-    )
-    lines.append("")
-    lines.append("Layer sample coverage:")
-
-    for _, row in layer_sample_coverage.iterrows():
-        lines.append(
-            f"- {row['group']}: present in {int(row['sample_count_with_layer'])} sample(s)"
-        )
-
-    lines.append("")
-    lines.append(
-        f"Stable recurrent threshold: gene appears in at least "
-        f"{int(STABLE_FRACTION_THRESHOLD * 100)}% of samples where that layer exists."
-    )
-    lines.append(
-        f"Core recurrent threshold: gene appears in at least "
-        f"{int(CORE_FRACTION_THRESHOLD * 100)}% of samples where that layer exists."
-    )
-    lines.append("")
-    lines.append("Stable recurrent genes by layer:")
-
-    for group_name in sorted(recurrence_df["group"].unique()):
-        group_stable = stable_df[stable_df["group"] == group_name].copy()
-
-        lines.append("")
-        lines.append(f"{group_name}:")
-
-        if group_stable.empty:
-            lines.append("- No stable recurrent top-10 genes found for this layer.")
-            continue
-
-        group_stable = group_stable.sort_values(
-            ["recurrence_fraction", "sample_count", "mean_logfoldchange"],
-            ascending=[False, False, False],
-        )
-
-        for _, row in group_stable.head(15).iterrows():
-            lines.append(
-                f"- {row['names']}: {int(row['sample_count'])}/"
-                f"{int(row['sample_count_with_layer'])} samples, "
-                f"recurrence={row['recurrence_fraction']:.2f}, "
-                f"category={row['recurrence_category']}"
-            )
-
-    lines.append("")
-    lines.append("Safe report wording:")
-    lines.append(
-        "Across the 12 Visium samples, several genes repeatedly appeared among the "
-        "clean top-10 layer-associated markers. These recurrent genes represent "
-        "candidate stable brain-layer signature genes within the Visium discovery dataset."
-    )
-    lines.append("")
-    lines.append("Avoid saying:")
-    lines.append(
-        "These genes are fully validated across all brain datasets. External validation "
-        "with GTEx and GSE25219 is still required."
+    core_df.to_csv(
+        COMPARISON_FOLDER / "core_signature_genes_by_layer.csv",
+        index=False,
     )
 
-    with open(output_path, "w", encoding="utf-8") as file:
-        file.write("\n".join(lines))
+    print("Saved: core_signature_genes_by_layer.csv")
+    print("Core recurrent genes:", core_df.shape[0])
 
-    print("Saved:", output_path)
-    print("\n".join(lines))
+    return core_df
 
 
-def check_final_outputs() -> None:
+def check_outputs() -> None:
     expected_files = [
         "combined_top10_signature_genes_clean_all12.csv",
         "layer_sample_coverage_all12.csv",
         "all12_signature_gene_recurrence_by_layer.csv",
         "stable_signature_genes_by_layer.csv",
-        "stable_signature_gene_summary_all12.txt",
+        "core_signature_genes_by_layer.csv",
     ]
 
     expected_figures = [
@@ -388,22 +314,24 @@ def check_final_outputs() -> None:
 
     for file_name in expected_files:
         file_path = COMPARISON_FOLDER / file_name
+
         if not file_path.exists():
             missing_files.append(file_path)
 
     for file_name in expected_figures:
         file_path = FIGURE_FOLDER / file_name
+
         if not file_path.exists():
             missing_files.append(file_path)
 
     if missing_files:
-        print("Missing expected files:")
+        print("Missing expected output files:")
         for file_path in missing_files:
             print("-", file_path)
 
-        raise FileNotFoundError("Some expected signature recurrence outputs are missing.")
+        raise FileNotFoundError("Some expected recurrence output files are missing.")
 
-    print("No missing files. All expected signature recurrence outputs were generated successfully.")
+    print("No missing files. All expected recurrence outputs were generated successfully.")
 
 
 def main() -> None:
@@ -414,25 +342,21 @@ def main() -> None:
     layer_sample_coverage = save_layer_sample_coverage(combined_top10_df)
 
     recurrence_df = calculate_gene_recurrence(
-        combined_top10_df,
-        layer_sample_coverage,
+        combined_top10_df=combined_top10_df,
+        layer_sample_coverage=layer_sample_coverage,
     )
 
     stable_df = save_stable_signature_genes(recurrence_df)
+    save_core_signature_genes(recurrence_df)
 
     plot_stable_gene_count_by_layer(stable_df)
-
     plot_signature_recurrence_heatmap(recurrence_df)
 
-    save_summary_text(
-        layer_sample_coverage,
-        recurrence_df,
-        stable_df,
-    )
+    check_outputs()
 
-    check_final_outputs()
-
-    print("\nAll-12 signature gene recurrence analysis completed.")
+    print("\nStable recurrent signature gene analysis completed.")
+    print("Outputs saved in:", COMPARISON_FOLDER)
+    print("Figures saved in:", FIGURE_FOLDER)
 
 
 if __name__ == "__main__":

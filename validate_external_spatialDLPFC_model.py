@@ -354,208 +354,212 @@ def calculate_metrics(y_true, y_pred):
     }
 
 
-def plot_confusion_matrix(matrix, labels, sample_name, prediction_type):
-    output_path = FIGURE_FOLDER / f"confusion_matrix_external_{sample_name}_{prediction_type}.png"
-
+def plot_confusion_matrix(matrix, labels, prediction_type):
     plt.figure(figsize=(8, 7))
-    plt.imshow(matrix, aspect="auto")
+    plt.imshow(matrix, interpolation="nearest")
+    plt.title(f"External spatialDLPFC Confusion Matrix ({prediction_type})")
+    plt.colorbar()
 
-    plt.colorbar(label="Number of Spots")
-    plt.xticks(range(len(labels)), labels, rotation=45, ha="right")
-    plt.yticks(range(len(labels)), labels)
+    tick_marks = np.arange(len(labels))
+    plt.xticks(tick_marks, labels, rotation=45, ha="right")
+    plt.yticks(tick_marks, labels)
 
-    plt.title(f"External spatialDLPFC Confusion Matrix: {sample_name} / {prediction_type}")
-    plt.xlabel("Predicted Label")
-    plt.ylabel("True Label")
+    threshold = matrix.max() / 2.0 if matrix.max() > 0 else 0
 
     for row_index in range(matrix.shape[0]):
-        for col_index in range(matrix.shape[1]):
-            value = matrix[row_index, col_index]
+        for column_index in range(matrix.shape[1]):
+            value = int(matrix[row_index, column_index])
+            color = "white" if value > threshold else "black"
+            plt.text(
+                column_index,
+                row_index,
+                value,
+                ha="center",
+                va="center",
+                color=color,
+            )
 
-            if value > 0:
-                plt.text(
-                    col_index,
-                    row_index,
-                    str(value),
-                    ha="center",
-                    va="center",
-                )
-
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
     plt.tight_layout()
+
+    output_path = FIGURE_FOLDER / f"confusion_matrix_external_ALL_EXTERNAL_LABELLED_{prediction_type}.png"
     plt.savefig(output_path, dpi=300)
     plt.close()
 
     print("Saved:", output_path)
 
 
-def evaluate_external_samples(model, external_adatas, selected_genes):
-    all_labels = [
-        "Layer1",
-        "Layer2",
-        "Layer3",
-        "Layer4",
-        "Layer5",
-        "Layer6",
-        "WM",
-    ]
+def evaluate_sample(sample_id, adata, model, genes):
+    X, y_true, neighbor_indices, available_genes, missing_genes = build_neighborhood_feature_matrix(
+        adata=adata,
+        genes=genes,
+        neighbor_k=NEIGHBOR_K,
+    )
+
+    raw_predictions = model.predict(X)
+    smoothed_predictions = smooth_predictions(
+        predictions=raw_predictions,
+        neighbor_indices=neighbor_indices,
+    )
+
+    prediction_table = pd.DataFrame(
+        {
+            "sample_id": sample_id,
+            "spot_id": adata.obs_names.astype(str),
+            "true_label": y_true,
+            "raw_prediction": raw_predictions,
+            "smoothed_prediction": smoothed_predictions,
+        }
+    )
+
+    prediction_table.to_csv(
+        OUTPUT_FOLDER / f"external_predictions_{sample_id}.csv",
+        index=False,
+    )
 
     summary_rows = []
-    class_report_tables = []
-    y_true_all = []
-    y_raw_all = []
-    y_smoothed_all = []
-    feature_audit_rows = []
 
-    for sample_id, adata in external_adatas.items():
-        X_test, y_test, neighbor_indices, available_genes, missing_genes = build_neighborhood_feature_matrix(
-            adata=adata,
-            genes=selected_genes,
-            neighbor_k=NEIGHBOR_K,
-        )
-
-        raw_predictions = model.predict(X_test)
-
-        smoothed_predictions = smooth_predictions(
-            predictions=raw_predictions,
-            neighbor_indices=neighbor_indices,
-        )
-
-        prediction_sets = {
-            "raw": raw_predictions,
-            "smoothed": smoothed_predictions,
-        }
-
-        for prediction_type, predictions in prediction_sets.items():
-            metrics = calculate_metrics(y_test, predictions)
-
-            row = {
-                "sample_id": sample_id,
-                "prediction_type": prediction_type,
-                "model": "linear_svm",
-                "feature_mode": "stable_genes_top20",
-                "neighbor_k": NEIGHBOR_K,
-                "spot_count": len(y_test),
-                "selected_genes": len(selected_genes),
-                "available_genes": len(available_genes),
-                "missing_genes": len(missing_genes),
-            }
-
-            row.update(metrics)
-            summary_rows.append(row)
-
-            report_dict = classification_report(
-                y_test,
-                predictions,
-                labels=all_labels,
-                output_dict=True,
-                zero_division=0,
-            )
-
-            report_df = pd.DataFrame(report_dict).transpose()
-            report_df.insert(0, "sample_id", sample_id)
-            report_df.insert(1, "prediction_type", prediction_type)
-
-            class_report_tables.append(report_df.reset_index(names="label"))
-
-            report_df.to_csv(
-                OUTPUT_FOLDER / f"external_classification_report_{sample_id}_{prediction_type}.csv",
-                index=True,
-            )
-
-            cm = confusion_matrix(
-                y_test,
-                predictions,
-                labels=all_labels,
-            )
-
-            cm_df = pd.DataFrame(
-                cm,
-                index=all_labels,
-                columns=all_labels,
-            )
-
-            cm_df.to_csv(
-                OUTPUT_FOLDER / f"confusion_matrix_external_{sample_id}_{prediction_type}.csv",
-                index=True,
-            )
-
-            plot_confusion_matrix(
-                matrix=cm,
-                labels=all_labels,
-                sample_name=sample_id,
-                prediction_type=prediction_type,
-            )
-
-        y_true_all.extend(y_test)
-        y_raw_all.extend(raw_predictions)
-        y_smoothed_all.extend(smoothed_predictions)
-
-        feature_audit_rows.append(
-            {
-                "sample_id": sample_id,
-                "split": "external_test",
-                "selected_genes": len(selected_genes),
-                "available_genes": len(available_genes),
-                "missing_genes": len(missing_genes),
-                "feature_count_after_neighborhood": X_test.shape[1],
-                "missing_gene_names": ", ".join(missing_genes),
-            }
-        )
-
-    y_true_all = np.array(y_true_all)
-    y_raw_all = np.array(y_raw_all)
-    y_smoothed_all = np.array(y_smoothed_all)
-
-    for prediction_type, predictions in {
-        "raw": y_raw_all,
-        "smoothed": y_smoothed_all,
-    }.items():
-        metrics = calculate_metrics(y_true_all, predictions)
+    for prediction_type, predictions in [
+        ("raw", raw_predictions),
+        ("smoothed", smoothed_predictions),
+    ]:
+        metrics = calculate_metrics(y_true, predictions)
 
         row = {
-            "sample_id": "ALL_EXTERNAL_LABELLED",
+            "sample_id": sample_id,
             "prediction_type": prediction_type,
-            "model": "linear_svm",
-            "feature_mode": "stable_genes_top20",
-            "neighbor_k": NEIGHBOR_K,
-            "spot_count": len(y_true_all),
-            "selected_genes": len(selected_genes),
-            "available_genes": np.nan,
-            "missing_genes": np.nan,
+            "spot_count": len(y_true),
+            "selected_genes": len(genes),
+            "available_genes": len(available_genes),
+            "missing_genes": len(missing_genes),
+            "missing_gene_names": ", ".join(missing_genes),
         }
 
         row.update(metrics)
         summary_rows.append(row)
 
         report_dict = classification_report(
-            y_true_all,
+            y_true,
             predictions,
-            labels=all_labels,
+            labels=sorted(set(y_true) | set(predictions)),
             output_dict=True,
             zero_division=0,
         )
 
         report_df = pd.DataFrame(report_dict).transpose()
-        report_df.insert(0, "sample_id", "ALL_EXTERNAL_LABELLED")
-        report_df.insert(1, "prediction_type", prediction_type)
-
-        class_report_tables.append(report_df.reset_index(names="label"))
+        report_df["sample_id"] = sample_id
+        report_df["prediction_type"] = prediction_type
 
         report_df.to_csv(
-            OUTPUT_FOLDER / f"external_classification_report_ALL_EXTERNAL_LABELLED_{prediction_type}.csv",
+            OUTPUT_FOLDER / f"external_classification_report_{sample_id}_{prediction_type}.csv",
             index=True,
         )
 
+        cm_labels = sorted(set(y_true) | set(predictions))
         cm = confusion_matrix(
-            y_true_all,
+            y_true,
             predictions,
-            labels=all_labels,
+            labels=cm_labels,
         )
 
         cm_df = pd.DataFrame(
             cm,
-            index=all_labels,
-            columns=all_labels,
+            index=cm_labels,
+            columns=cm_labels,
+        )
+
+        cm_df.to_csv(
+            OUTPUT_FOLDER / f"confusion_matrix_external_{sample_id}_{prediction_type}.csv",
+            index=True,
+        )
+
+    feature_audit = pd.DataFrame(
+        [
+            {
+                "sample_id": sample_id,
+                "selected_genes": len(genes),
+                "available_genes": len(available_genes),
+                "missing_genes": len(missing_genes),
+                "missing_gene_names": ", ".join(missing_genes),
+                "feature_count_expected": len(genes) * 2,
+                "feature_count_actual": X.shape[1],
+                "neighbor_k": NEIGHBOR_K,
+            }
+        ]
+    )
+
+    feature_audit.to_csv(
+        OUTPUT_FOLDER / f"external_feature_availability_{sample_id}.csv",
+        index=False,
+    )
+
+    del X
+    gc.collect()
+
+    return pd.DataFrame(summary_rows), prediction_table, feature_audit
+
+
+def evaluate_combined(all_prediction_tables, genes):
+    combined_predictions = pd.concat(all_prediction_tables, ignore_index=True)
+
+    combined_predictions.to_csv(
+        OUTPUT_FOLDER / "external_predictions_ALL_EXTERNAL_LABELLED.csv",
+        index=False,
+    )
+
+    y_true = combined_predictions["true_label"].astype(str).to_numpy()
+    raw_predictions = combined_predictions["raw_prediction"].astype(str).to_numpy()
+    smoothed_predictions = combined_predictions["smoothed_prediction"].astype(str).to_numpy()
+
+    labels = sorted(set(y_true) | set(raw_predictions) | set(smoothed_predictions))
+
+    summary_rows = []
+    all_reports = []
+
+    for prediction_type, predictions in [
+        ("raw", raw_predictions),
+        ("smoothed", smoothed_predictions),
+    ]:
+        metrics = calculate_metrics(y_true, predictions)
+
+        row = {
+            "sample_id": "ALL_EXTERNAL_LABELLED",
+            "prediction_type": prediction_type,
+            "spot_count": len(y_true),
+            "selected_genes": len(genes),
+            "available_genes": "",
+            "missing_genes": "",
+            "missing_gene_names": "",
+        }
+
+        row.update(metrics)
+        summary_rows.append(row)
+
+        report_dict = classification_report(
+            y_true,
+            predictions,
+            labels=labels,
+            output_dict=True,
+            zero_division=0,
+        )
+
+        report_df = pd.DataFrame(report_dict).transpose()
+        report_df["sample_id"] = "ALL_EXTERNAL_LABELLED"
+        report_df["prediction_type"] = prediction_type
+
+        all_reports.append(report_df)
+
+        cm = confusion_matrix(
+            y_true,
+            predictions,
+            labels=labels,
+        )
+
+        cm_df = pd.DataFrame(
+            cm,
+            index=labels,
+            columns=labels,
         )
 
         cm_df.to_csv(
@@ -565,98 +569,124 @@ def evaluate_external_samples(model, external_adatas, selected_genes):
 
         plot_confusion_matrix(
             matrix=cm,
-            labels=all_labels,
-            sample_name="ALL_EXTERNAL_LABELLED",
+            labels=labels,
             prediction_type=prediction_type,
         )
 
-    summary_df = pd.DataFrame(summary_rows)
+    combined_report = pd.concat(all_reports, axis=0)
 
-    summary_df = summary_df.sort_values(
-        [
-            "sample_id",
-            "prediction_type",
-        ]
-    ).reset_index(drop=True)
+    combined_report.to_csv(
+        OUTPUT_FOLDER / "external_classification_report_ALL_EXTERNAL_LABELLED.csv",
+        index=True,
+    )
+
+    return pd.DataFrame(summary_rows), combined_report
+
+
+def check_outputs(sample_ids):
+    expected_files = [
+        "external_spatialDLPFC_validation_summary.csv",
+        "external_spatialDLPFC_classwise_reports_combined.csv",
+        "external_predictions_ALL_EXTERNAL_LABELLED.csv",
+        "external_feature_availability_audit.csv",
+        "external_classification_report_ALL_EXTERNAL_LABELLED.csv",
+        "confusion_matrix_external_ALL_EXTERNAL_LABELLED_raw.csv",
+        "confusion_matrix_external_ALL_EXTERNAL_LABELLED_smoothed.csv",
+    ]
+
+    expected_figures = [
+        "confusion_matrix_external_ALL_EXTERNAL_LABELLED_raw.png",
+        "confusion_matrix_external_ALL_EXTERNAL_LABELLED_smoothed.png",
+    ]
+
+    for sample_id in sample_ids:
+        expected_files.extend(
+            [
+                f"external_predictions_{sample_id}.csv",
+                f"external_classification_report_{sample_id}_raw.csv",
+                f"external_classification_report_{sample_id}_smoothed.csv",
+                f"confusion_matrix_external_{sample_id}_raw.csv",
+                f"confusion_matrix_external_{sample_id}_smoothed.csv",
+                f"external_feature_availability_{sample_id}.csv",
+            ]
+        )
+
+    missing_files = []
+
+    for file_name in expected_files:
+        file_path = OUTPUT_FOLDER / file_name
+
+        if not file_path.exists():
+            missing_files.append(file_path)
+
+    for file_name in expected_figures:
+        file_path = FIGURE_FOLDER / file_name
+
+        if not file_path.exists():
+            missing_files.append(file_path)
+
+    if missing_files:
+        print("Missing expected external validation outputs:")
+
+        for file_path in missing_files:
+            print("-", file_path)
+
+        raise FileNotFoundError("Some expected external validation output files are missing.")
+
+    print("No missing files. External validation outputs were generated successfully.")
+
+
+def main():
+    model, genes = load_final_model_and_genes()
+    sample_adatas = load_external_samples()
+
+    sample_summaries = []
+    all_prediction_tables = []
+    feature_audits = []
+
+    for sample_id, adata in sample_adatas.items():
+        sample_summary, prediction_table, feature_audit = evaluate_sample(
+            sample_id=sample_id,
+            adata=adata,
+            model=model,
+            genes=genes,
+        )
+
+        sample_summaries.append(sample_summary)
+        all_prediction_tables.append(prediction_table)
+        feature_audits.append(feature_audit)
+
+    combined_summary, combined_report = evaluate_combined(
+        all_prediction_tables=all_prediction_tables,
+        genes=genes,
+    )
+
+    summary_df = pd.concat(
+        sample_summaries + [combined_summary],
+        ignore_index=True,
+    )
 
     summary_df.to_csv(
         OUTPUT_FOLDER / "external_spatialDLPFC_validation_summary.csv",
         index=False,
     )
 
-    class_report_df = pd.concat(class_report_tables, ignore_index=True)
-
-    class_report_df.to_csv(
+    combined_report.to_csv(
         OUTPUT_FOLDER / "external_spatialDLPFC_classwise_reports_combined.csv",
-        index=False,
+        index=True,
     )
 
-    feature_audit_df = pd.DataFrame(feature_audit_rows)
+    feature_audit_df = pd.concat(feature_audits, ignore_index=True)
 
     feature_audit_df.to_csv(
         OUTPUT_FOLDER / "external_feature_availability_audit.csv",
         index=False,
     )
 
-    return summary_df
-
-
-def save_text_summary(summary_df):
-    combined_smoothed = summary_df[
-        (summary_df["sample_id"] == "ALL_EXTERNAL_LABELLED")
-        & (summary_df["prediction_type"] == "smoothed")
-    ].iloc[0]
-
-    summary_text = f"""
-External spatialDLPFC Labelled Subset Validation
-
-Final model:
-Stable top-20 recurrent genes.
-k=10 spatial neighborhood features.
-Linear SVM.
-Raw and smoothed predictions evaluated.
-
-External validation data:
-Three manually labelled spatialDLPFC samples:
-- Br6522_ant
-- Br6522_mid
-- Br8667_post
-
-Important limitation:
-This is a limited external validation subset, not full external validation across all 30 spatialDLPFC samples.
-
-Combined external smoothed result:
-Accuracy: {combined_smoothed["accuracy"]:.4f}
-Weighted F1: {combined_smoothed["weighted_f1"]:.4f}
-Macro F1: {combined_smoothed["macro_f1"]:.4f}
-
-Safe interpretation:
-This result should be reported as limited external validation on the manually labelled spatialDLPFC subset.
-"""
-
-    with open(OUTPUT_FOLDER / "external_spatialDLPFC_validation_interpretation.txt", "w", encoding="utf-8") as file:
-        file.write(summary_text)
-
-    print(summary_text)
-
-
-def main():
-    model, selected_genes = load_final_model_and_genes()
-
-    external_adatas = load_external_samples()
-
-    summary_df = evaluate_external_samples(
-        model=model,
-        external_adatas=external_adatas,
-        selected_genes=selected_genes,
-    )
-
-    save_text_summary(summary_df)
+    check_outputs(sample_adatas.keys())
 
     print("\nExternal spatialDLPFC validation completed.")
     print("Outputs saved in:", OUTPUT_FOLDER)
-
-    gc.collect()
 
 
 if __name__ == "__main__":

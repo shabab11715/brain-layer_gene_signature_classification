@@ -1,8 +1,3 @@
-# Visium ML classification using highly variable genes.
-# Trains supervised models to predict annotated brain-region labels from gene-expression values.
-# Uses leave-one-sample-out evaluation to test generalization across tissue samples.
-# Feature selection is performed inside each fold using only training samples.
-
 import gc
 from pathlib import Path
 

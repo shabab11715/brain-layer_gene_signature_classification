@@ -207,65 +207,10 @@ def plot_ari_nmi_summary(combined_df: pd.DataFrame) -> None:
     print("Saved:", plot_path)
 
 
-def save_clustering_interpretation(combined_df: pd.DataFrame, qc_df: pd.DataFrame) -> None:
-    summary_path = COMPARISON_FOLDER / "clustering_summary_interpretation_all12.txt"
-
-    best_ari_row = combined_df.sort_values("ARI", ascending=False).iloc[0]
-    best_nmi_row = combined_df.sort_values("NMI", ascending=False).iloc[0]
-
-    mean_ari = combined_df["ARI"].mean()
-    mean_nmi = combined_df["NMI"].mean()
-    mean_removed = qc_df["percent_removed_after_filter"].mean()
-
-    text = f"""
-All-12 Visium Clustering Summary
-
-Number of samples analyzed: {len(combined_df)}
-
-QC overview:
-- Mean percentage of spots removed by light filtering: {mean_removed:.2f}%
-- QC filtering used min_genes >= 200 and min_counts >= 500.
-
-Best ARI:
-- Sample: {best_ari_row["sample_id"]}
-- ARI: {best_ari_row["ARI"]:.4f}
-- NMI: {best_ari_row["NMI"]:.4f}
-
-Best NMI:
-- Sample: {best_nmi_row["sample_id"]}
-- ARI: {best_nmi_row["ARI"]:.4f}
-- NMI: {best_nmi_row["NMI"]:.4f}
-
-Overall average:
-- Mean ARI: {mean_ari:.4f}
-- Mean NMI: {mean_nmi:.4f}
-
-Interpretation:
-The Leiden clustering results show partial agreement with annotated brain-layer labels.
-This means the gene-expression structure has meaningful biological signal, but clustering alone does not perfectly reproduce the manually annotated brain layers.
-
-Correct wording:
-Label-informed Leiden parameter tuning partially aligned spatial transcriptomic clusters with annotated cortical layers across the 12 Visium samples.
-
-Avoid saying:
-Leiden clustering perfectly identified all brain layers.
-
-Avoid saying:
-This was fully unsupervised clustering, because ARI/NMI used known labels to select the best clustering setting.
-"""
-
-    with open(summary_path, "w", encoding="utf-8") as file:
-        file.write(text)
-
-    print("Saved:", summary_path)
-    print(text)
-
-
-def check_final_outputs() -> None:
+def check_outputs() -> None:
     expected_files = [
         "combined_qc_summary_all12.csv",
         "combined_final_clustering_summary_all12.csv",
-        "clustering_summary_interpretation_all12.txt",
     ]
 
     expected_figures = [
@@ -277,20 +222,23 @@ def check_final_outputs() -> None:
 
     for file_name in expected_files:
         file_path = COMPARISON_FOLDER / file_name
+
         if not file_path.exists():
             missing_files.append(file_path)
 
     for file_name in expected_figures:
         file_path = FIGURE_FOLDER / file_name
+
         if not file_path.exists():
             missing_files.append(file_path)
 
     if missing_files:
-        print("Missing expected files:")
+        print("Missing expected comparison outputs:")
+
         for file_path in missing_files:
             print("-", file_path)
 
-        raise FileNotFoundError("Some expected comparison outputs are missing.")
+        raise FileNotFoundError("Some expected comparison output files are missing.")
 
     print("No missing files. All expected all-12 comparison outputs were generated successfully.")
 
@@ -303,17 +251,15 @@ def main() -> None:
 
     combined_df = combine_final_clustering_summaries()
     plot_ari_nmi_summary(combined_df)
-    save_clustering_interpretation(combined_df, qc_df)
 
-    check_final_outputs()
+    check_outputs()
 
-    print("\nAll-12 comparison stage completed.")
-    print("Generated files:")
+    print("\nAll-12 Visium comparison completed.")
+    print("Saved outputs:")
     print("-", COMPARISON_FOLDER / "combined_qc_summary_all12.csv")
     print("-", FIGURE_FOLDER / "all12_qc_spots_kept_removed.png")
     print("-", COMPARISON_FOLDER / "combined_final_clustering_summary_all12.csv")
     print("-", FIGURE_FOLDER / "all12_ari_nmi_comparison.png")
-    print("-", COMPARISON_FOLDER / "clustering_summary_interpretation_all12.txt")
 
 
 if __name__ == "__main__":

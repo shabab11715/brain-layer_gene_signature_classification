@@ -447,11 +447,11 @@ def get_neighbor_indices(adata: sc.AnnData, neighbor_k: int) -> np.ndarray:
     return indices[:, 1:]
 
 
-def build_neighborhood_feature_matrix(
+def build_neighborhood_features(
     adata: sc.AnnData,
     genes: list[str],
     neighbor_k: int,
-) -> tuple[sparse.csr_matrix, np.ndarray, np.ndarray, list[str], list[str]]:
+) -> tuple[sparse.csr_matrix, np.ndarray, np.ndarray, pd.DataFrame]:
     X_own, available_genes, missing_genes = extract_gene_matrix_sparse(
         adata=adata,
         genes=genes,
@@ -465,7 +465,7 @@ def build_neighborhood_feature_matrix(
     actual_k = neighbor_indices.shape[1]
 
     if actual_k == 0:
-        raise ValueError("No neighbors were found for neighborhood feature construction.")
+        raise ValueError("No neighbors were found.")
 
     row_indices = np.repeat(np.arange(adata.n_obs), actual_k)
     column_indices = neighbor_indices.reshape(-1)
@@ -488,21 +488,46 @@ def build_neighborhood_feature_matrix(
 
     y = adata.obs[LABEL_COLUMN].astype(str).to_numpy()
 
-    return X_combined, y, neighbor_indices, available_genes, missing_genes
+    feature_audit = pd.DataFrame(
+        [
+            {
+                "sample_id": adata.obs["sample_id"].iloc[0],
+                "neighbor_k": neighbor_k,
+                "selected_genes": len(genes),
+                "available_genes": len(available_genes),
+                "missing_genes": len(missing_genes),
+                "missing_gene_names": ", ".join(missing_genes),
+                "feature_count_expected": len(genes) * 2,
+                "feature_count_actual": X_combined.shape[1],
+                "actual_neighbor_count": actual_k,
+            }
+        ]
+    )
+
+    return X_combined, y, neighbor_indices, feature_audit
 
 
-def combine_training_data(
+def combine_training_data_with_neighbors(
     sample_adatas: dict[str, sc.AnnData],
     train_sample_ids: list[str],
+    test_sample_id: str,
     genes: list[str],
     neighbor_k: int,
-) -> tuple[sparse.csr_matrix, np.ndarray, pd.DataFrame]:
+) -> tuple[
+    sparse.csr_matrix,
+    np.ndarray,
+    sparse.csr_matrix,
+    np.ndarray,
+    np.ndarray,
+    pd.DataFrame,
+    pd.DataFrame,
+]:
     X_train_parts = []
     y_train_parts = []
-    audit_rows = []
+    train_audit_rows = []
 
     for sample_id in train_sample_ids:
-        X_sample, y_sample, _, available_genes, missing_genes = build_neighborhood_feature_matrix(
+        X_sample, y_sample, _, feature_audit = build_neighborhood_features(
             adata=sample_adatas[sample_id],
             genes=genes,
             neighbor_k=neighbor_k,
@@ -510,56 +535,28 @@ def combine_training_data(
 
         X_train_parts.append(X_sample)
         y_train_parts.append(y_sample)
-
-        audit_rows.append(
-            {
-                "sample_id": sample_id,
-                "split": "train",
-                "neighbor_k": neighbor_k,
-                "selected_genes": len(genes),
-                "available_genes": len(available_genes),
-                "missing_genes": len(missing_genes),
-                "feature_count_after_neighborhood": X_sample.shape[1],
-                "missing_gene_names": ", ".join(missing_genes),
-            }
-        )
+        train_audit_rows.append(feature_audit)
 
     X_train = sparse.vstack(X_train_parts).tocsr()
     y_train = np.concatenate(y_train_parts)
 
-    feature_audit = pd.DataFrame(audit_rows)
-
-    return X_train, y_train, feature_audit
-
-
-def build_test_data(
-    sample_adatas: dict[str, sc.AnnData],
-    test_sample_id: str,
-    genes: list[str],
-    neighbor_k: int,
-) -> tuple[sparse.csr_matrix, np.ndarray, np.ndarray, pd.DataFrame]:
-    X_test, y_test, neighbor_indices, available_genes, missing_genes = build_neighborhood_feature_matrix(
+    X_test, y_test, test_neighbor_indices, test_audit = build_neighborhood_features(
         adata=sample_adatas[test_sample_id],
         genes=genes,
         neighbor_k=neighbor_k,
     )
 
-    feature_audit = pd.DataFrame(
-        [
-            {
-                "sample_id": test_sample_id,
-                "split": "test",
-                "neighbor_k": neighbor_k,
-                "selected_genes": len(genes),
-                "available_genes": len(available_genes),
-                "missing_genes": len(missing_genes),
-                "feature_count_after_neighborhood": X_test.shape[1],
-                "missing_gene_names": ", ".join(missing_genes),
-            }
-        ]
-    )
+    train_audit = pd.concat(train_audit_rows, ignore_index=True)
 
-    return X_test, y_test, neighbor_indices, feature_audit
+    return (
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        test_neighbor_indices,
+        train_audit,
+        test_audit,
+    )
 
 
 def smooth_predictions(
@@ -625,33 +622,39 @@ def plot_confusion_matrix(
     model_name: str,
     prediction_type: str,
 ) -> None:
-    output_path = ML_FIGURE_FOLDER / f"confusion_matrix_{feature_mode}_k{neighbor_k}_{model_name}_{prediction_type}.png"
-
     plt.figure(figsize=(8, 7))
-    plt.imshow(matrix, aspect="auto")
+    plt.imshow(matrix, interpolation="nearest")
+    plt.title(f"{feature_mode}, k={neighbor_k}, {model_name}, {prediction_type}")
+    plt.colorbar()
 
-    plt.colorbar(label="Number of Spots")
-    plt.xticks(range(len(labels)), labels, rotation=45, ha="right")
-    plt.yticks(range(len(labels)), labels)
+    tick_marks = np.arange(len(labels))
+    plt.xticks(tick_marks, labels, rotation=45, ha="right")
+    plt.yticks(tick_marks, labels)
 
-    plt.title(f"7-Class Neighborhood Confusion Matrix: {feature_mode} / k={neighbor_k} / {model_name} / {prediction_type}")
-    plt.xlabel("Predicted Label")
-    plt.ylabel("True Label")
+    threshold = matrix.max() / 2.0 if matrix.max() > 0 else 0
 
     for row_index in range(matrix.shape[0]):
-        for col_index in range(matrix.shape[1]):
-            value = matrix[row_index, col_index]
+        for column_index in range(matrix.shape[1]):
+            value = int(matrix[row_index, column_index])
+            color = "white" if value > threshold else "black"
+            plt.text(
+                column_index,
+                row_index,
+                value,
+                ha="center",
+                va="center",
+                color=color,
+            )
 
-            if value > 0:
-                plt.text(
-                    col_index,
-                    row_index,
-                    str(value),
-                    ha="center",
-                    va="center",
-                )
-
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
     plt.tight_layout()
+
+    output_path = (
+        ML_FIGURE_FOLDER
+        / f"confusion_matrix_{feature_mode}_k{neighbor_k}_{model_name}_{prediction_type}.png"
+    )
+
     plt.savefig(output_path, dpi=300)
     plt.close()
 
@@ -663,44 +666,49 @@ def evaluate_feature_mode_and_neighbor_k(
     feature_mode: str,
     neighbor_k: int,
 ) -> pd.DataFrame:
-    models = get_models()
     sample_ids = sorted(sample_adatas.keys())
-
     all_labels = sorted(
-        set(
+        {
             label
             for adata in sample_adatas.values()
             for label in adata.obs[LABEL_COLUMN].astype(str).unique()
-        )
+        }
     )
 
-    model_tracking = {}
+    models = get_models()
 
-    for model_name in models:
-        model_tracking[model_name] = {
+    model_tracking = {
+        model_name: {
             "y_true": [],
             "raw_predictions": [],
             "smoothed_predictions": [],
             "fold_rows": [],
         }
+        for model_name in models
+    }
 
-    feature_frequency_rows = []
     feature_audit_tables = []
+    feature_frequency_rows = []
 
     for fold_index, test_sample_id in enumerate(sample_ids, start=1):
+        print("\n" + "=" * 80)
+        print(
+            f"Feature mode: {feature_mode} | k={neighbor_k} | Fold {fold_index}/{len(sample_ids)} | Test sample: {test_sample_id}"
+        )
+        print("=" * 80)
+
         train_sample_ids = [
             sample_id
             for sample_id in sample_ids
             if sample_id != test_sample_id
         ]
 
-        print("\n" + "-" * 80)
-        print(f"Feature mode: {feature_mode}, k={neighbor_k}, fold={fold_index}, test={test_sample_id}")
-        print("-" * 80)
-
         if feature_mode == "hvg":
             selected_genes = select_hvg_from_training_data(
-                train_adatas=[sample_adatas[sample_id] for sample_id in train_sample_ids],
+                train_adatas=[
+                    sample_adatas[sample_id]
+                    for sample_id in train_sample_ids
+                ],
                 fold_index=fold_index,
                 test_sample_id=test_sample_id,
                 neighbor_k=neighbor_k,
@@ -727,15 +735,17 @@ def evaluate_feature_mode_and_neighbor_k(
                 }
             )
 
-        X_train, y_train, train_audit = combine_training_data(
+        (
+            X_train,
+            y_train,
+            X_test,
+            y_test,
+            test_neighbor_indices,
+            train_audit,
+            test_audit,
+        ) = combine_training_data_with_neighbors(
             sample_adatas=sample_adatas,
             train_sample_ids=train_sample_ids,
-            genes=selected_genes,
-            neighbor_k=neighbor_k,
-        )
-
-        X_test, y_test, test_neighbor_indices, test_audit = build_test_data(
-            sample_adatas=sample_adatas,
             test_sample_id=test_sample_id,
             genes=selected_genes,
             neighbor_k=neighbor_k,
@@ -927,71 +937,12 @@ def evaluate_feature_mode_and_neighbor_k(
 
 
 def save_final_summary(all_summary_tables: list[pd.DataFrame]) -> pd.DataFrame:
-    combined_summary = pd.concat(
-        all_summary_tables,
-        ignore_index=True,
-    )
-
-    combined_summary = combined_summary.sort_values(
-        [
-            "weighted_f1",
-            "macro_f1",
-            "accuracy",
-        ],
-        ascending=False,
-    ).reset_index(drop=True)
+    combined_summary = pd.concat(all_summary_tables, ignore_index=True)
 
     combined_summary.to_csv(
         ML_OUTPUT_FOLDER / "neighborhood_7class_combined_model_comparison_summary.csv",
         index=False,
     )
-
-    best_row = combined_summary.iloc[0]
-
-    summary_text = f"""
-7-Class Neighborhood-Aware Visium ML Classification Summary
-
-Task:
-Predict the original seven annotated brain-region labels:
-Layer1, Layer2, Layer3, Layer4, Layer5, Layer6, and WM.
-
-Main feature idea:
-Each spot is represented using its own selected gene expression plus the average selected gene expression of its nearest neighboring spots.
-
-Feature modes tested:
-- HVG
-- Stable recurrent signature genes
-
-Neighborhood sizes tested:
-- 3
-- 5
-- 10
-
-Prediction types tested:
-- raw
-- smoothed
-
-Best result:
-- Feature mode: {best_row["feature_mode"]}
-- Neighbor k: {int(best_row["neighbor_k"])}
-- Model: {best_row["model"]}
-- Prediction type: {best_row["prediction_type"]}
-- Accuracy: {best_row["accuracy"]:.4f}
-- Weighted F1: {best_row["weighted_f1"]:.4f}
-- Macro F1: {best_row["macro_f1"]:.4f}
-
-Interpretation:
-This output should be compared against the earlier expression-only 7-class HVG and stable-gene model results.
-The key question is whether adding spatial neighborhood context improves exact cortical-layer prediction.
-"""
-
-    summary_path = ML_OUTPUT_FOLDER / "neighborhood_7class_summary_interpretation.txt"
-
-    with open(summary_path, "w", encoding="utf-8") as file:
-        file.write(summary_text)
-
-    print("Saved:", summary_path)
-    print(summary_text)
 
     return combined_summary
 
@@ -1000,7 +951,6 @@ def check_outputs() -> None:
     expected_files = [
         "neighborhood_ml_dataset_summary_all12.csv",
         "neighborhood_7class_combined_model_comparison_summary.csv",
-        "neighborhood_7class_summary_interpretation.txt",
     ]
 
     feature_modes = [
