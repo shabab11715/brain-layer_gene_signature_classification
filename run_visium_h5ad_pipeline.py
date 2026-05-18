@@ -1,6 +1,3 @@
-# Added for local reusable Visium H5AD pipeline
-# Runs all .h5ad files inside the Data folder and saves outputs per sample.
-
 import argparse
 import os
 import re
@@ -195,8 +192,6 @@ def save_spatial_plot(
 ) -> None:
     output_path = figure_folder / file_name
 
-    # Added because Squidpy size is a scale factor, not the same as Scanpy spot_size.
-    # Old Scanpy default spot_size=80 is treated here as Squidpy size=1.0.
     squidpy_size = max(float(spot_size) / 80.0, 0.05)
 
     plot_kwargs = {
@@ -344,14 +339,12 @@ def preprocess_for_clustering(adata_qc: sc.AnnData) -> None:
         n_top_genes=2000,
     )
 
-    # Added zero_center=False to avoid sparse matrix densification warning
     sc.pp.scale(
         adata_qc,
         max_value=10,
         zero_center=False,
     )
 
-    # Updated because use_highly_variable=True is deprecated
     sc.tl.pca(
         adata_qc,
         mask_var="highly_variable",
@@ -481,7 +474,6 @@ def run_baseline_clustering(
         n_pcs=30,
     )
 
-    # Added igraph Leiden backend to avoid FutureWarning and improve clustering speed
     sc.tl.leiden(
         adata_qc,
         resolution=0.5,
@@ -662,6 +654,7 @@ def select_best_clustering(
 
     return best_cluster_key, best_candidate, final_ari, final_nmi
 
+
 def remove_extra_tuning_cluster_columns(adata_qc: sc.AnnData) -> None:
     tuning_cluster_columns = [
         column
@@ -676,6 +669,7 @@ def remove_extra_tuning_cluster_columns(adata_qc: sc.AnnData) -> None:
             "Removed temporary Leiden tuning columns from final saved AnnData:",
             len(tuning_cluster_columns),
         )
+
 
 def save_final_clustering_outputs(
     adata_qc: sc.AnnData,
