@@ -42,7 +42,7 @@ def check_required_files() -> None:
             sample_folder / f"filter_threshold_summary_{sample_id}.csv",
             sample_folder / f"final_clustering_summary_{sample_id}.csv",
             sample_folder / f"leiden_tuning_ranked_results_{sample_id}.csv",
-            sample_folder / f"top10_signature_genes_clean_{sample_id}.csv",
+            sample_folder / f"top20_signature_genes_clean_{sample_id}.csv",
             sample_folder / f"signature_genes_all_{sample_id}.csv",
             sample_folder / f"final_spot_cluster_assignments_{sample_id}.csv",
             sample_folder / f"top_signature_gene_spatial_maps_{sample_id}.csv",

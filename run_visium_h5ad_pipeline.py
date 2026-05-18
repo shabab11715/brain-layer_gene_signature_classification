@@ -399,7 +399,7 @@ def make_safe_file_part(value: str) -> str:
 
 def save_top_signature_gene_spatial_maps(
     adata_de: sc.AnnData,
-    top10_signature_genes_clean: pd.DataFrame,
+    top_signature_genes_clean: pd.DataFrame,
     output_folder: Path,
     figure_folder: Path,
     sample_id: str,
@@ -412,7 +412,7 @@ def save_top_signature_gene_spatial_maps(
     plotted_rows = []
 
     top_gene_per_group = (
-        top10_signature_genes_clean
+        top_signature_genes_clean
         .groupby("group", group_keys=False, observed=False)
         .head(1)
         .reset_index(drop=True)
@@ -819,34 +819,34 @@ def run_signature_gene_analysis(
         ~signature_results["names"].astype(str).str.startswith("MT-")
     ].copy()
 
-    top10_signature_genes_clean = (
+    top20_signature_genes_clean = (
         signature_results_clean
         .groupby("group", observed=False)
-        .head(10)
+        .head(20)
         .reset_index(drop=True)
     )
 
     expected_marker_groups = sorted(signature_results["group"].unique())
 
     clean_marker_counts = (
-        top10_signature_genes_clean
+        top20_signature_genes_clean
         .groupby("group", observed=False)
         .size()
         .reindex(expected_marker_groups, fill_value=0)
     )
 
-    if (clean_marker_counts < 10).any():
-        print("Warning: Some groups have fewer than 10 clean non-mitochondrial signature genes.")
+    if (clean_marker_counts < 20).any():
+        print("Warning: Some groups have fewer than 20 clean non-mitochondrial signature genes.")
         print(clean_marker_counts)
 
-    top10_signature_genes_clean.to_csv(
-        output_folder / f"top10_signature_genes_clean_{sample_id}.csv",
+    top20_signature_genes_clean.to_csv(
+        output_folder / f"top20_signature_genes_clean_{sample_id}.csv",
         index=False,
     )
 
     save_top_signature_gene_spatial_maps(
         adata_de=adata_de,
-        top10_signature_genes_clean=top10_signature_genes_clean,
+        top_signature_genes_clean=top20_signature_genes_clean,
         output_folder=output_folder,
         figure_folder=figure_folder,
         sample_id=sample_id,
@@ -868,7 +868,7 @@ def check_expected_outputs(output_folder: Path, figure_folder: Path, sample_id: 
         f"final_spot_cluster_assignments_{sample_id}.csv",
         f"adata_qc_final_{sample_id}.h5ad",
         f"signature_genes_all_{sample_id}.csv",
-        f"top10_signature_genes_clean_{sample_id}.csv",
+        f"top20_signature_genes_clean_{sample_id}.csv",
         f"top_signature_gene_spatial_maps_{sample_id}.csv",
     ]
 

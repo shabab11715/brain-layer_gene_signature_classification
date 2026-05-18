@@ -41,7 +41,7 @@ def check_required_files() -> None:
         file_path = (
             OUTPUT_ROOT
             / sample_id
-            / f"top10_signature_genes_clean_{sample_id}.csv"
+            / f"top20_signature_genes_clean_{sample_id}.csv"
         )
 
         if not file_path.exists():
@@ -52,12 +52,12 @@ def check_required_files() -> None:
         for file_path in missing_files:
             print("-", file_path)
 
-        raise FileNotFoundError("Some top10 signature gene files are missing.")
+        raise FileNotFoundError("Some top20 signature gene files are missing.")
 
-    print("All top10 clean signature gene files found.")
+    print("All top20 clean signature gene files found.")
 
 
-def load_top10_signature_tables() -> pd.DataFrame:
+def load_top20_signature_tables() -> pd.DataFrame:
     all_tables = []
 
     required_columns = {
@@ -73,7 +73,7 @@ def load_top10_signature_tables() -> pd.DataFrame:
         file_path = (
             OUTPUT_ROOT
             / sample_id
-            / f"top10_signature_genes_clean_{sample_id}.csv"
+            / f"top20_signature_genes_clean_{sample_id}.csv"
         )
 
         df = pd.read_csv(file_path)
@@ -88,22 +88,22 @@ def load_top10_signature_tables() -> pd.DataFrame:
         df["sample_id"] = sample_id
         all_tables.append(df)
 
-    combined_top10_df = pd.concat(all_tables, ignore_index=True)
+    combined_top20_df = pd.concat(all_tables, ignore_index=True)
 
-    combined_top10_df.to_csv(
-        COMPARISON_FOLDER / "combined_top10_signature_genes_clean_all12.csv",
+    combined_top20_df.to_csv(
+        COMPARISON_FOLDER / "combined_top20_signature_genes_clean_all12.csv",
         index=False,
     )
 
-    print("Saved: combined_top10_signature_genes_clean_all12.csv")
-    print("Combined rows:", combined_top10_df.shape[0])
+    print("Saved: combined_top20_signature_genes_clean_all12.csv")
+    print("Combined rows:", combined_top20_df.shape[0])
 
-    return combined_top10_df
+    return combined_top20_df
 
 
-def save_layer_sample_coverage(combined_top10_df: pd.DataFrame) -> pd.DataFrame:
+def save_layer_sample_coverage(combined_top20_df: pd.DataFrame) -> pd.DataFrame:
     layer_sample_coverage = (
-        combined_top10_df
+        combined_top20_df
         .groupby("group")["sample_id"]
         .nunique()
         .reset_index()
@@ -123,11 +123,11 @@ def save_layer_sample_coverage(combined_top10_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def calculate_gene_recurrence(
-    combined_top10_df: pd.DataFrame,
+    combined_top20_df: pd.DataFrame,
     layer_sample_coverage: pd.DataFrame,
 ) -> pd.DataFrame:
     recurrence_df = (
-        combined_top10_df
+        combined_top20_df
         .groupby(["group", "names"])
         .agg(
             sample_count=("sample_id", "nunique"),
@@ -298,7 +298,7 @@ def save_core_signature_genes(recurrence_df: pd.DataFrame) -> pd.DataFrame:
 
 def check_outputs() -> None:
     expected_files = [
-        "combined_top10_signature_genes_clean_all12.csv",
+        "combined_top20_signature_genes_clean_all12.csv",
         "layer_sample_coverage_all12.csv",
         "all12_signature_gene_recurrence_by_layer.csv",
         "stable_signature_genes_by_layer.csv",
@@ -306,7 +306,6 @@ def check_outputs() -> None:
     ]
 
     expected_figures = [
-        "stable_gene_count_by_layer.png",
         "all12_signature_gene_recurrence_heatmap.png",
     ]
 
@@ -337,19 +336,18 @@ def check_outputs() -> None:
 def main() -> None:
     check_required_files()
 
-    combined_top10_df = load_top10_signature_tables()
+    combined_top20_df = load_top20_signature_tables()
 
-    layer_sample_coverage = save_layer_sample_coverage(combined_top10_df)
+    layer_sample_coverage = save_layer_sample_coverage(combined_top20_df)
 
     recurrence_df = calculate_gene_recurrence(
-        combined_top10_df=combined_top10_df,
+        combined_top20_df=combined_top20_df,
         layer_sample_coverage=layer_sample_coverage,
     )
 
-    stable_df = save_stable_signature_genes(recurrence_df)
+    save_stable_signature_genes(recurrence_df)
     save_core_signature_genes(recurrence_df)
 
-    plot_stable_gene_count_by_layer(stable_df)
     plot_signature_recurrence_heatmap(recurrence_df)
 
     check_outputs()
